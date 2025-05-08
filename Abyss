@@ -1,0 +1,185 @@
+/*
+Folder Structure for The Abyss (Deployable)
+
+📦 the-abyss
+├── 📁 backend
+│   ├── index.js
+│   ├── package.json
+│   └── .env (for local testing only)
+│
+├── 📁 frontend
+│   ├── index.html
+│   ├── app.js
+│   └── README.md
+*/
+
+// --- backend/package.json ---
+/*
+{
+  "name": "the-abyss-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "bad-words": "^3.0.4",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "mongoose": "^7.3.1"
+  }
+}
+*/
+
+// --- backend/index.js ---
+
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const Filter = require('bad-words');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(bodyParser.json());
+
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/theabyss', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+const factSchema = new mongoose.Schema({
+  text: String,
+  author: String,
+  category: String,
+  upvotes: { type: Number, default: 0 },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const Fact = mongoose.model('Fact', factSchema);
+const filter = new Filter();
+
+app.get('/api/facts', async (req, res) => {
+  const { category } = req.query;
+  const query = category ? { category } : {};
+  const facts = await Fact.find(query).sort({ createdAt: -1 });
+  res.json(facts);
+});
+
+app.post('/api/facts', async (req, res) => {
+  const { text, author, category } = req.body;
+  if (filter.isProfane(text)) {
+    return res.status(400).json({ error: 'Inappropriate content detected.' });
+  }
+  const fact = new Fact({ text, author: author || 'Anonymous', category });
+  await fact.save();
+  res.json(fact);
+});
+
+app.post('/api/upvote/:id', async (req, res) => {
+  const { id } = req.params;
+  const fact = await Fact.findByIdAndUpdate(id, { $inc: { upvotes: 1 } }, { new: true });
+  res.json(fact);
+});
+
+app.listen(port, () => {
+  console.log(`The Abyss backend running at http://localhost:${port}`);
+});
+
+// --- frontend/index.html ---
+/*
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Abyss</title>
+  <script defer src="app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class'
+    }
+  </script>
+</head>
+<body class="bg-gray-900 text-white">
+  <div class="max-w-3xl mx-auto p-6">
+    <h1 class="text-4xl font-bold text-center mb-6">The Abyss</h1>
+
+    <button id="toggleDark" class="mb-4 px-4 py-2 bg-gray-700 rounded">Toggle Dark Mode</button>
+
+    <form id="factForm" class="mb-6">
+      <textarea id="factText" required placeholder="Share your interesting fact..." class="w-full p-4 rounded text-black"></textarea>
+      <input id="authorName" placeholder="Your name (optional)" class="w-full mt-2 p-2 rounded text-black" />
+      <input id="category" placeholder="Category (e.g., Science, History)" class="w-full mt-2 p-2 rounded text-black" />
+      <button type="submit" class="mt-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded">Submit</button>
+    </form>
+
+    <div id="factsContainer" class="space-y-4"></div>
+  </div>
+</body>
+</html>
+*/
+
+// --- frontend/app.js ---
+
+const API_URL = 'https://the-abyss-backend.up.railway.app'; // Replace with your Railway backend URL
+
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('factForm');
+  const factText = document.getElementById('factText');
+  const authorName = document.getElementById('authorName');
+  const category = document.getElementById('category');
+  const factsContainer = document.getElementById('factsContainer');
+  const toggleDark = document.getElementById('toggleDark');
+
+  toggleDark.addEventListener('click', () => {
+    document.documentElement.classList.toggle('dark');
+  });
+
+  async function fetchFacts() {
+    const res = await fetch(`${API_URL}/api/facts`);
+    const facts = await res.json();
+    factsContainer.innerHTML = facts.map(f => `
+      <div class="p-4 bg-gray-800 rounded">
+        <p>${f.text}</p>
+        <div class="text-sm text-gray-400">
+          — ${f.author} (${f.category || 'General'})
+        </div>
+        <div class="mt-2 text-sm">
+          <button onclick="upvoteFact('${f._id}')" class="text-blue-400">Upvote (${f.upvotes})</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fact = factText.value.trim();
+    const author = authorName.value.trim();
+    const cat = category.value.trim();
+    const res = await fetch(`${API_URL}/api/facts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: fact, author, category: cat })
+    });
+    if (res.ok) {
+      factText.value = '';
+      authorName.value = '';
+      category.value = '';
+      fetchFacts();
+    } else {
+      alert('Your submission was blocked for inappropriate content.');
+    }
+  });
+
+  window.upvoteFact = async (id) => {
+    await fetch(`${API_URL}/api/upvote/${id}`, { method: 'POST' });
+    fetchFacts();
+  }
+
+  fetchFacts();
+});
